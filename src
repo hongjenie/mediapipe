@@ -1,177 +1,73 @@
 import cv2
-
 import mediapipe as mp
-
 import numpy as np
+from mediapipe.framework.formats import landmark_pb2 as mediapipe_landmarks
 
-from IPython.display import clear_output
-
-​
-
-mp_drawing = mp.solutions.drawing_utils
-
-mp_pose = mp.solutions.pose 
-
+mediapipe_drawing = mp.solutions.drawing_utils
+mediapipe_pose = mp.solutions.pose
 cap = cv2.VideoCapture(0)
 
-​
-
-counter = 0
-
-stage = None
-
-​
-
-def calculate_angle(a, b, c):
-
-a = np.array(a)
-
-b = np.array(b)
-
-c = np.array(c)
-
-​
-
-radians = np.arctan2(c[1] - b[1], c[0] - b[0]) - np.arctan2(a[1] - b[1], a[0] - b[0])
-
-angle = np.abs(radians * 180.0 / np.pi)
-
-​
-
-if angle > 180.0:
-
-angle = 360 - angle
-
-​
-
-return angle
-
-​
-
-## setup mediapipe instance
-
-with mp_pose.Pose(min_detection_confidence = 0.5, min_tracking_confidence = 0.5) as pose:
-
-while cap.isOpened():
-
-ret, frame = cap.read() 
-
-​
-
-# Recolor image to RGB
-
-image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-
-image.flags.writeable = True
-
-​
-
-# Make detection 
-
-results = pose.process(image)
-
-​
-
-# Recolor back to BGR
-
-image.flags.writeable = True
-
-image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-
-# Extract landmarks
-
-# try: 
-
-landmarks = results.pose_landmarks.landmark
-
-# Get coordinates
-
-knee = [landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value].x, landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value].y]
-
-elbow = [landmarks[mp_pose.PoseLandmark.LEFT_ELBOW.value].x, landmarks[mp_pose.PoseLandmark.LEFT_ELBOW.value].y]
-
-wrist = [landmarks[mp_pose.PoseLandmark.LEFT_WRIST.value].x, landmarks[mp_pose.PoseLandmark.LEFT_WRIST.value].y]
-
-​
-
-# Calculate angle
-
-angle = calculate_angle(knee, elbow, wrist)
-
-print(angle)
-
-​
-
-# Visualize angle
-
-cv2.putText(image, str(angle),
-
-tuple(np.multiply(elbow, [640, 480]).astype(int)), 
-
-cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2, cv2.LINE_AA
-
-) 
-
-cv2.rectangle(image, (0, 0), (250, 250), (245, 150, 25), 2)
-
-​
-
-# Curl counter logic
-
-if angle > 120:
-
-stage = "down"
-
-if (angle < 50) and (stage =='down'):
-
+count = 0
 stage = "up"
 
-counter += 1
+def calculate_angle(start_idx, end_idx):
+    start_idx = np.array(start_idx)
+    end_idx = np.array(end_idx)
 
-print(counter)
+    radians = np.arctan2(end_idx[1] - start_idx[1], end_idx[0] - start_idx[0])
+    angle = np.abs(radians * 180.0 / np.pi)
 
-​
+    if angle > 180.0:
+        angle = 360 - angle
+    return angle
 
-# Render curl counter 
+## setup mediapipe instance
+with mediapipe_pose.Pose(min_detection_confidence = 0.5, min_tracking_confidence = 0.5, model_complexity = 1) as pose:
+    while cap.isOpened():
+        success, image = cap.read()
+        
+        width = 1200
+        height = 900
 
-# Setup status box
+        image = cv2.resize(image, (width, height))        
+        if not success:
+            print("camera error")
+            break
 
-cv2.rectangle(image, (0, 0), (250, 250), (245, 150, 25), 2)
+        image.flags.writeable = False
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        results = pose.process(image)
+        
+        # Extract landmarks for shoulder and hand
+        right_shoulder_landmark = results.pose_landmarks.landmark[11] if results.pose_landmarks.landmark[11].visibility > 0.8 else None
+        left_shoulder_landmark = results.pose_landmarks.landmark[13] if results.pose_landmarks.landmark[12].visibility > 0.8 else None
 
-​
+        image.flags.writeable = True                                                                                                        
+        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)                                                                                      
+        
+        if right_shoulder_landmark is not None and left_shoulder_landmark is not None:                                                  
+            # Calculate angle                                           
+            angle = calculate_angle([right_shoulder_landmark.x, right_shoulder_landmark.y], [left_shoulder_landmark.x, left_shoulder_landmark.y])
 
-# COUNT data 
+            # Count occurrences based on conditions                                                                             
+            if (angle > 40):
+                stage = "down"            
+            if (angle < 40) and (stage == "down"):
+                stage = "up"
+                count += 1
+                print(count)                   
+            # Visualize angle
+            cv2.putText(image, f"Angle : {str(round(angle))}", (50, 60), cv2.FONT_HERSHEY_DUPLEX, 2, (255, 255, 255))
+            cv2.putText(image, f"Count : {str(round(count))}", (0, 780), cv2.FONT_HERSHEY_DUPLEX, 3, (255, 0, 255))
 
-cv2.putText(image, 'COUNT', (50, 30), cv2.FONT_HERSHEY_COMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA) 
+        mediapipe_drawing.draw_landmarks(image, results.pose_landmarks, mediapipe_pose.POSE_CONNECTIONS,
+                                         mediapipe_drawing.DrawingSpec(color=(240, 117, 66), thickness=2, circle_radius=2),
+                                         mediapipe_drawing.DrawingSpec(color=(240, 66, 230), thickness=2, circle_radius=2)
+        )
 
-cv2.putText(image, str(counter), (10, 60), cv2.FONT_HERSHEY_COMPLEX, 2, (255, 255, 255), 2, cv2.LINE_AA)
+        cv2.imshow('****Body Movements****', image)
+        if cv2.waitKey(10) & 0xFF == ord('q'):
+            break
 
-​
-
-# Render detections
-
-mp_drawing.draw_landmarks(image, results.pose_landmarks, mp_pose.POSE_CONNECTIONS,
-
-mp_drawing.DrawingSpec(color = (240, 117, 66), thickness = 2, circle_radius = 2),
-
-mp_drawing.DrawingSpec(color = (240, 66, 230), thickness = 2, circle_radius = 2)
-
-)
-
-​
-
-cv2.imshow('Mediapipe Feed', image) 
-
-​
-
-if cv2.waitKey(10) & 0xFF == ord('q'):
-
-break
-
-​
-
-cap.release()
-
-cv2.destroyAllWindows()
-
-​
+    cap.release()
+    cv2.destroyAllWindows()
